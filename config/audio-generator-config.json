@@ -1,0 +1,15 @@
+{
+  "version": "v1.0",
+  "voice_settings": {
+    "style": "deep_dramatic",
+    "pace_wpm": 160,
+    "emphasis_words": ["secret", "truth", "never", "dark", "manipulation"],
+    "pause_after_hook": 0.5
+  },
+  "audio_effects": {
+    "background_music_volume": 0.15,
+    "whoosh_on_cut": true,
+    "heartbeat_on_reveal": true,
+    "heartbeat_volume": 0.3
+  }
+}
