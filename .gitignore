@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Data (these are generated at runtime)
+data/analytics.json
+data/competitor_trends.json
+data/comment_sentiment.json
+data/cache/
+
+# Logs
+logs/daily-reports/
+logs/errors/
+logs/health_check.json
+logs/push_log.json
+
+# Temp files
+temp/pending-configs/
+
+# Pending scripts (generated at runtime)
+pending_scripts/
+
+# Evolution history (keep history.json, ignore prompt versions in git)
+# evolution/history.json is kept
+evolution/prompt_versions/*.json
+!evolution/prompt_versions/.gitkeep
