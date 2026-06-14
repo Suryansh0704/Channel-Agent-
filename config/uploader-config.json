@@ -1,0 +1,14 @@
+{
+  "version": "v1.0",
+  "optimal_upload_times": ["09:00", "18:00"],
+  "title_formula": "first_sentence",
+  "hashtags": {
+    "niche": ["DarkPsychology", "HumanBehavior", "PsychologicalTricks"],
+    "viral": ["ViralShorts", "TrendingShorts", "Shorts"],
+    "count": 15,
+    "test_hashtags": []
+  },
+  "description_template": "default",
+  "category_id": "27",
+  "privacy_status": "public"
+}
