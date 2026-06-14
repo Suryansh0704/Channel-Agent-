@@ -1,0 +1,87 @@
+name: Channel Intelligence
+
+on:
+  schedule:
+    - cron: '30 3 * * *'   # 9:00 AM IST (UTC+5:30)
+    - cron: '30 12 * * *'  # 6:00 PM IST (UTC+5:30)
+  workflow_dispatch:
+    inputs:
+      run_number:
+        description: 'Run number (1 or 2)'
+        required: true
+        default: '1'
+
+jobs:
+  run-intelligence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Channel-Agent-
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
+
+      - name: Health Check
+        run: python scripts/health_check.py
+
+      - name: Collect Analytics
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        run: python scripts/analytics_collector.py
+
+      - name: Analyze Comments
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/comment_analyzer.py
+
+      - name: Evolve Configs
+        env:
+          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
+        run: python scripts/evolve_configs.py
+
+      - name: Generate Script Prompt
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/generate_script_prompt.py
+
+      - name: Batch Generate Scripts (Run 1 only)
+        if: github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/batch_generator.py
+
+      - name: Push Configs to Repos
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: python scripts/push_configs.py
+
+      - name: Cross-Platform Adapt
+        if: github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1'
+        run: python scripts/cross_platform_adapter.py
+
+      - name: Send Email Report
+        env:
+          EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM_ADDRESS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO_ADDRESS }}
+          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
+        run: python scripts/send_email_report.py
+
+      - name: Commit Evolution History
+        run: |
+          git config user.name "Channel Agent"
+          git config user.email "agent@channel.local"
+          git add -A
+          git diff --cached --quiet || git commit -m "Daily evolution run ${{ github.run_number }}"
+          git push
