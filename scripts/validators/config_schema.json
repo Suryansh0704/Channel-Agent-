@@ -1,0 +1,148 @@
+{
+  "video-generator-config.json": {
+    "type": "object",
+    "required": ["version", "target_duration_seconds", "hook_settings", "visual_settings"],
+    "properties": {
+      "version": {"type": "string"},
+      "target_duration_seconds": {"type": "number", "minimum": 30, "maximum": 90},
+      "hook_settings": {
+        "type": "object",
+        "required": ["duration_seconds", "style"],
+        "properties": {
+          "duration_seconds": {"type": "number", "minimum": 1, "maximum": 10},
+          "style": {"type": "string", "enum": ["question", "statement", "story", "number"]},
+          "templates": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "visual_settings": {
+        "type": "object",
+        "required": ["cut_interval_seconds"],
+        "properties": {
+          "text_animation": {"type": "string"},
+          "background": {"type": "string"},
+          "caption_style": {"type": "string"},
+          "cut_interval_seconds": {"type": "number", "minimum": 0.5, "maximum": 5},
+          "zoom_on_impact": {"type": "boolean"},
+          "zoom_intensity": {"type": "number", "minimum": 1.0, "maximum": 2.0}
+        }
+      },
+      "title_optimization": {
+        "type": "object",
+        "properties": {
+          "preferred_words": {"type": "array", "items": {"type": "string"}},
+          "max_length": {"type": "number", "maximum": 100},
+          "must_include_hook": {"type": "boolean"}
+        }
+      },
+      "content_rules": {
+        "type": "object",
+        "properties": {
+          "pattern_interrupt_every_seconds": {"type": "number"},
+          "danger_zone_mitigation": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "thumbnail_text_overlay": {
+        "type": "object",
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "style": {"type": "string"},
+          "max_words": {"type": "number", "maximum": 5}
+        }
+      }
+    }
+  },
+  "audio-generator-config.json": {
+    "type": "object",
+    "required": ["version", "voice_settings", "audio_effects"],
+    "properties": {
+      "version": {"type": "string"},
+      "voice_settings": {
+        "type": "object",
+        "required": ["pace_wpm"],
+        "properties": {
+          "style": {"type": "string"},
+          "pace_wpm": {"type": "number", "minimum": 120, "maximum": 200},
+          "emphasis_words": {"type": "array", "items": {"type": "string"}},
+          "pause_after_hook": {"type": "number"}
+        }
+      },
+      "audio_effects": {
+        "type": "object",
+        "properties": {
+          "background_music_volume": {"type": "number", "minimum": 0, "maximum": 1},
+          "whoosh_on_cut": {"type": "boolean"},
+          "heartbeat_on_reveal": {"type": "boolean"},
+          "heartbeat_volume": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      }
+    }
+  },
+  "video-editor-config.json": {
+    "type": "object",
+    "required": ["version", "cut_settings", "text_overlay"],
+    "properties": {
+      "version": {"type": "string"},
+      "cut_settings": {
+        "type": "object",
+        "properties": {
+          "max_segment_duration": {"type": "number", "minimum": 1, "maximum": 10},
+          "transition_style": {"type": "string"},
+          "zoom_on_impact": {"type": "boolean"},
+          "zoom_intensity": {"type": "number", "minimum": 1.0, "maximum": 2.0}
+        }
+      },
+      "text_overlay": {
+        "type": "object",
+        "properties": {
+          "duration_seconds": {"type": "number"},
+          "highlight_keywords": {"type": "array", "items": {"type": "string"}},
+          "font_size": {"type": "number"},
+          "font_color": {"type": "string"},
+          "stroke_color": {"type": "string"},
+          "stroke_width": {"type": "number"}
+        }
+      },
+      "danger_zones": {"type": "array", "items": {"type": "number"}},
+      "danger_zone_effects": {"type": "object"}
+    }
+  },
+  "uploader-config.json": {
+    "type": "object",
+    "required": ["version", "optimal_upload_times", "hashtags"],
+    "properties": {
+      "version": {"type": "string"},
+      "optimal_upload_times": {"type": "array", "items": {"type": "string"}},
+      "title_formula": {"type": "string"},
+      "hashtags": {
+        "type": "object",
+        "properties": {
+          "niche": {"type": "array", "items": {"type": "string"}},
+          "viral": {"type": "array", "items": {"type": "string"}},
+          "count": {"type": "number", "minimum": 10, "maximum": 20},
+          "test_hashtags": {"type": "array", "items": {"type": "string"}}
+        }
+      },
+      "description_template": {"type": "string"},
+      "category_id": {"type": "string"},
+      "privacy_status": {"type": "string", "enum": ["public", "private", "unlisted"]}
+    }
+  },
+  "script-prompt-config.json": {
+    "type": "object",
+    "required": ["version", "gemini_system_prompt", "rules"],
+    "properties": {
+      "version": {"type": "string"},
+      "generated_at": {"type": "string"},
+      "gemini_system_prompt": {"type": "string", "minLength": 100},
+      "rules": {
+        "type": "object",
+        "properties": {
+          "optimal_length_words": {"type": "number", "minimum": 100, "maximum": 200},
+          "must_include": {"type": "array", "items": {"type": "string"}},
+          "avoid_patterns": {"type": "array", "items": {"type": "string"}},
+          "preferred_patterns": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}
