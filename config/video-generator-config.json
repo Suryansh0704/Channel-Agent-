@@ -1,0 +1,37 @@
+{
+  "version": "v1.0",
+  "target_duration_seconds": 55,
+  "hook_settings": {
+    "duration_seconds": 3,
+    "style": "statement",
+    "templates": [
+      "This is why...",
+      "The truth about...",
+      "Never...",
+      "The dark secret of...",
+      "What they don't tell you about..."
+    ]
+  },
+  "visual_settings": {
+    "text_animation": "fade",
+    "background": "dark_gradient",
+    "caption_style": "bold_white",
+    "cut_interval_seconds": 2.0,
+    "zoom_on_impact": true,
+    "zoom_intensity": 1.2
+  },
+  "title_optimization": {
+    "preferred_words": ["secret", "truth", "why", "never", "dark"],
+    "max_length": 80,
+    "must_include_hook": true
+  },
+  "content_rules": {
+    "pattern_interrupt_every_seconds": 8,
+    "danger_zone_mitigation": ["zoom", "text_flash", "sound_effect"]
+  },
+  "thumbnail_text_overlay": {
+    "enabled": true,
+    "style": "bold_red",
+    "max_words": 3
+  }
+}
