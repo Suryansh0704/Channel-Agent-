@@ -1,144 +1,270 @@
-name: Channel Intelligence
+"""
+health_check.py — System Health Checker
+========================================
+Verifies all external dependencies before every workflow run.
+If any check fails → skips run, sends alert.
+"""
 
-on:
-  schedule:
-    - cron: '30 3 * * *'    # 9:00 AM IST (UTC+5:30)
-    - cron: '30 12 * * *'   # 6:00 PM IST (UTC+5:30)
-  workflow_dispatch:
-    inputs:
-      run_number:
-        description: 'Run number (1 or 2)'
-        required: true
-        default: '1'
-        type: choice
-        options:
-          - '1'
-          - '2'
+import os
+import sys
+import json
+import requests
+from pathlib import Path
 
-env:
-  YT_API_KEY: ${{ secrets.YT_API_KEY }}
-  CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-  PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
-  EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
-  EMAIL_TO_ADDRESS: ${{ secrets.EMAIL_TO_ADDRESS }}
+# ══════════════════════════════════════════════════════════════
+#  CONFIG
+# ══════════════════════════════════════════════════════════════
 
-jobs:
-  run-intelligence:
-    runs-on: ubuntu-latest
+OWNER = "Suryansh0704"
+REPOS = [
+    "Channel-Agent-",
+    "Video-generator-",
+    "Audio-generator-",
+    "Video-editor-"
+]
+
+SECRETS_REQUIRED = [
+    "YT_API_KEY",
+    "CHANNEL_ID",
+    "YT_REFRESH_TOKEN",
+    "YT_CLIENT_ID",
+    "YT_CLIENT_SECRET",
+    "PAT_TOKEN",
+    "GEMINI_API_KEY",
+    "EMAIL_SERVICE_API_KEY",
+    "EMAIL_FROM_ADDRESS",
+    "EMAIL_TO_ADDRESS"
+]
+
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+# ══════════════════════════════════════════════════════════════
+#  CHECK FUNCTIONS
+# ══════════════════════════════════════════════════════════════
+
+def check_secrets_present():
+    """Check all required secrets are set in environment."""
+    missing = []
+    for s in SECRETS_REQUIRED:
+        if not os.environ.get(s, ""):
+            missing.append(s)
     
-    steps:
-      - name: Checkout Channel-Agent-
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
+    if missing:
+        return {
+            "status": "FAIL",
+            "message": "Missing: " + ", ".join(missing)
+        }
+    
+    return {
+        "status": "PASS",
+        "message": "All " + str(len(SECRETS_REQUIRED)) + " secrets present"
+    }
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
+def check_github_access():
+    """Verify PAT_TOKEN can access GitHub API and all repos."""
+    token = os.environ.get("PAT_TOKEN", "")
+    if not token:
+        return {"status": "FAIL", "message": "PAT_TOKEN not set"}
+    
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.github+json"
+    }
+    
+    # Check GitHub API
+    r = requests.get("https://api.github.com/user", headers=headers, timeout=10)
+    if r.status_code != 200:
+        return {"status": "FAIL", "message": "GitHub API: " + str(r.status_code)}
+    
+    user = r.json().get("login", "unknown")
+    
+    # Check each repo exists and is accessible
+    repo_status = []
+    for repo in REPOS:
+        r = requests.get(
+            "https://api.github.com/repos/" + OWNER + "/" + repo,
+            headers=headers, timeout=10
+        )
+        if r.status_code == 200:
+            repo_status.append(repo + ": OK")
+        else:
+            repo_status.append(repo + ": FAIL(" + str(r.status_code) + ")")
+    
+    return {
+        "status": "PASS",
+        "message": "GitHub user: " + user,
+        "repos": repo_status
+    }
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 1: HEALTH CHECK (Gates everything)
-      # ═══════════════════════════════════════════════════════
-      - name: Health Check
-        id: health
-        run: python scripts/health_check.py
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 2: COLLECT ANALYTICS
-      # ═══════════════════════════════════════════════════════
-      - name: Collect Analytics
-        if: steps.health.outcome == 'success'
-        run: python scripts/analytics_collector.py
+def check_youtube_api():
+    """Verify YouTube Data API v3 key is valid and has quota."""
+    api_key = os.environ.get("YT_API_KEY", "")
+    channel_id = os.environ.get("CHANNEL_ID", "")
+    
+    if not api_key:
+        return {"status": "FAIL", "message": "YT_API_KEY not set"}
+    if not channel_id:
+        return {"status": "FAIL", "message": "CHANNEL_ID not set"}
+    
+    url = "https://www.googleapis.com/youtube/v3/channels"
+    params = {
+        "part": "snippet,statistics",
+        "id": channel_id,
+        "key": api_key
+    }
+    
+    r = requests.get(url, params=params, timeout=10)
+    if r.status_code != 200:
+        return {"status": "FAIL", "message": "YouTube API: " + str(r.status_code)}
+    
+    data = r.json()
+    if not data.get("items"):
+        return {"status": "FAIL", "message": "Channel not found"}
+    
+    channel_name = data["items"][0]["snippet"]["title"]
+    return {"status": "PASS", "message": "Channel: " + channel_name}
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 3: ANALYZE COMMENTS
-      # ═══════════════════════════════════════════════════════
-      - name: Analyze Comments
-        if: steps.health.outcome == 'success'
-        run: python scripts/comment_analyzer.py
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 4: EVOLVE CONFIGS
-      # ═══════════════════════════════════════════════════════
-      - name: Evolve Configs
-        if: steps.health.outcome == 'success'
-        env:
-          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
-        run: python scripts/evolve_configs.py
+def check_youtube_oauth():
+    """Verify YouTube OAuth credentials are set."""
+    required = ["YT_REFRESH_TOKEN", "YT_CLIENT_ID", "YT_CLIENT_SECRET"]
+    missing = []
+    for s in required:
+        if not os.environ.get(s, ""):
+            missing.append(s)
+    
+    if missing:
+        return {"status": "FAIL", "message": "Missing: " + ", ".join(missing)}
+    
+    return {"status": "PASS", "message": "OAuth credentials present"}
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 5: GENERATE SCRIPT PROMPT
-      # ═══════════════════════════════════════════════════════
-      - name: Generate Script Prompt
-        if: steps.health.outcome == 'success'
-        run: python scripts/generate_script_prompt.py
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 6: BATCH GENERATE SCRIPTS (Run 1 only)
-      # ═══════════════════════════════════════════════════════
-      - name: Batch Generate Scripts
-        if: |
-          steps.health.outcome == 'success' && 
-          (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
-        run: python scripts/batch_generator.py
+def check_gemini_api():
+    """Verify Gemini API key is valid."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return {"status": "FAIL", "message": "GEMINI_API_KEY not set"}
+    
+    url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + api_key
+    r = requests.get(url, timeout=10)
+    
+    if r.status_code != 200:
+        return {"status": "FAIL", "message": "Gemini API: " + str(r.status_code)}
+    
+    models = [m["name"] for m in r.json().get("models", [])]
+    gemini_models = [m for m in models if "gemini" in m.lower()]
+    
+    return {
+        "status": "PASS",
+        "message": "Models available: " + str(len(gemini_models))
+    }
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 7: PUSH CONFIGS TO ALL REPOS
-      # ═══════════════════════════════════════════════════════
-      - name: Push Configs to Repos
-        if: steps.health.outcome == 'success'
-        run: python scripts/push_configs.py
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 8: CROSS-PLATFORM ADAPT (Run 1 only)
-      # ═══════════════════════════════════════════════════════
-      - name: Cross-Platform Adapt
-        if: |
-          steps.health.outcome == 'success' && 
-          (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
-        run: python scripts/cross_platform_adapter.py
+def check_email_service():
+    """Verify email service API key is set."""
+    api_key = os.environ.get("EMAIL_SERVICE_API_KEY", "")
+    from_addr = os.environ.get("EMAIL_FROM_ADDRESS", "")
+    to_addr = os.environ.get("EMAIL_TO_ADDRESS", "")
+    
+    missing = []
+    if not api_key:
+        missing.append("EMAIL_SERVICE_API_KEY")
+    if not from_addr:
+        missing.append("EMAIL_FROM_ADDRESS")
+    if not to_addr:
+        missing.append("EMAIL_TO_ADDRESS")
+    
+    if missing:
+        return {"status": "FAIL", "message": "Missing: " + ", ".join(missing)}
+    
+    return {
+        "status": "PASS",
+        "message": "From: " + from_addr + " -> To: " + to_addr
+    }
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 9: SEND EMAIL REPORT
-      # ═══════════════════════════════════════════════════════
-      - name: Send Email Report
-        if: steps.health.outcome == 'success'
-        env:
-          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
-        run: python scripts/send_email_report.py
 
-      # ═══════════════════════════════════════════════════════
-      #  STEP 10: COMMIT EVOLUTION HISTORY
-      # ═══════════════════════════════════════════════════════
-      - name: Commit Evolution History
-        if: steps.health.outcome == 'success'
-        run: |
-          git config user.name "Channel Agent"
-          git config user.email "agent@channel.local"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Daily evolution run ${{ github.run_number }} — $(date -u +%Y-%m-%d_%H:%M)"
-            git push
-          else
-            echo "No changes to commit"
-          fi
+def check_config_files():
+    """Verify required config files exist or can be created."""
+    required_dirs = [
+        "config",
+        "data",
+        "evolution",
+        "pending_scripts",
+        "logs",
+        "scripts/validators"
+    ]
+    
+    missing_dirs = []
+    for d in required_dirs:
+        if not Path(d).exists():
+            missing_dirs.append(d)
+            Path(d).mkdir(parents=True, exist_ok=True)
+    
+    if missing_dirs:
+        return {
+            "status": "WARN",
+            "message": "Created missing dirs: " + ", ".join(missing_dirs)
+        }
+    
+    return {"status": "PASS", "message": "All directories present"}
 
-      # ═══════════════════════════════════════════════════════
-      #  FAILURE HANDLER
-      # ═══════════════════════════════════════════════════════
-      - name: On Failure — Send Alert
-        if: failure()
-        run: |
-          echo "❌ Workflow failed. Check logs for details."
+
+# ══════════════════════════════════════════════════════════════
+#  MAIN
+# ══════════════════════════════════════════════════════════════
+
+def main():
+    print("=" * 62)
+    print("  Health Check - Channel Agent")
+    print("=" * 62)
+    
+    checks = {}
+    checks["secrets"] = check_secrets_present()
+    checks["github"] = check_github_access()
+    checks["youtube_api"] = check_youtube_api()
+    checks["youtube_oauth"] = check_youtube_oauth()
+    checks["gemini"] = check_gemini_api()
+    checks["email"] = check_email_service()
+    checks["config_files"] = check_config_files()
+    
+    # Print results
+    print("")
+    all_pass = True
+    for name, result in checks.items():
+        status = result["status"]
+        if status == "PASS":
+            icon = "PASS"
+        elif status == "WARN":
+            icon = "WARN"
+        else:
+            icon = "FAIL"
+        print("  " + icon + " " + name.upper().ljust(15) + " -> " + status + " | " + result["message"])
+        if status == "FAIL":
+            all_pass = False
+    
+    # Save log
+    log_data = {
+        "overall": "PASS" if all_pass else "FAIL",
+        "checks": checks
+    }
+    
+    log_file = LOG_DIR / "health_check.json"
+    with open(log_file, "w") as f:
+        json.dump(log_data, f, indent=2)
+    
+    print("\n  Log saved: " + str(log_file))
+    print("=" * 62)
+    
+    if not all_pass:
+        print("  FAIL HEALTH CHECK FAILED - Aborting workflow")
+        sys.exit(1)
+    else:
+        print("  PASS ALL CHECKS PASSED - Proceeding")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
