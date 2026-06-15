@@ -1,100 +1,68 @@
-name: Channel Intelligence
+# ==============================================================
+#  MAIN
+# ==============================================================
 
-"on":
-  workflow_dispatch:
-    inputs:
-      run_number:
-        description: 'Run number (1 or 2)'
-        required: true
-        default: '1'
-        type: choice
-        options:
-          - '1'
-          - '2'
-  schedule:
-    - cron: '30 3 * * *'
-    - cron: '30 12 * * *'
+def main():
+    print("=" * 62)
+    print("  Health Check - Channel Agent")
+    print("=" * 62)
 
-env:
-  YT_API_KEY: ${{ secrets.YT_API_KEY }}
-  CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-  PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-  EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
-  EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
-  EMAIL_TO_ADDRESS: ${{ secrets.EMAIL_TO_ADDRESS }}
+    checks = {
+        "secrets": check_secrets_present(),
+        "github": check_github_access(),
+        "youtube_api": check_youtube_api(),
+        "youtube_oauth": check_youtube_oauth(),
+        "gemini": check_gemini_api(),
+        "email": check_email_service(),
+        "config_files": check_config_files(),
+    }
 
-jobs:
-  run-intelligence:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
+    print()
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+    all_pass = True
 
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
+    for name, result in checks.items():
+        status = result.get("status", "FAIL")
 
-      - name: Health Check
-        id: health
-        run: python scripts/health_check.py
+        if status == "PASS":
+            icon = "PASS"
+        elif status == "WARN":
+            icon = "WARN"
+        else:
+            icon = "FAIL"
+            all_pass = False
 
-      - name: Collect Analytics
-        if: success() && steps.health.outcome == 'success'
-        run: python scripts/analytics_collector.py
+        print(
+            f"  {icon} {name.upper().ljust(15)} -> "
+            f"{status} | {result.get('message', '')}"
+        )
 
-      - name: Analyze Comments
-        if: success() && steps.health.outcome == 'success'
-        run: python scripts/comment_analyzer.py
+        if "repos" in result:
+            for repo in result["repos"]:
+                print(f"      {repo}")
 
-      - name: Evolve Configs
-        if: success() && steps.health.outcome == 'success'
-        env:
-          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
-        run: python scripts/evolve_configs.py
+    log_data = {
+        "overall": "PASS" if all_pass else "FAIL",
+        "checks": checks,
+    }
 
-      - name: Generate Script Prompt
-        if: success() && steps.health.outcome == 'success'
-        run: python scripts/generate_script_prompt.py
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-      - name: Batch Generate Scripts
-        if: success() && steps.health.outcome == 'success' && (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
-        run: python scripts/batch_generator.py
+    log_file = LOG_DIR / "health_check.json"
 
-      - name: Push Configs
-        if: success() && steps.health.outcome == 'success'
-        run: python scripts/push_configs.py
+    with log_file.open("w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2)
 
-      - name: Cross-Platform Adapt
-        if: success() && steps.health.outcome == 'success' && (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
-        run: python scripts/cross_platform_adapter.py
+    print(f"\n  Log saved: {log_file}")
+    print("=" * 62)
 
-      - name: Send Email Report
-        if: success() && steps.health.outcome == 'success'
-        env:
-          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
-        run: python scripts/send_email_report.py
+    if all_pass:
+        print("  PASS ALL CHECKS PASSED - Proceeding")
+        sys.exit(0)
+    else:
+        print("  FAIL HEALTH CHECK FAILED - Aborting workflow")
+        sys.exit(1)
 
-      - name: Commit History
-        if: success() && steps.health.outcome == 'success'
-        run: |
-          git config user.name "Channel Agent"
-          git config user.email "agent@channel.local"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Run ${{ github.run_number }} $(date -u +%Y-%m-%d_%H:%M)"
-            git push
-          else
-            echo "No changes"
-          fi
+
+if __name__ == "__main__":
+    main()
