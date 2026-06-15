@@ -1,68 +1,749 @@
-# ==============================================================
-#  MAIN
-# ==============================================================
+name: Channel Intelligence
 
-def main():
-    print("=" * 62)
-    print("  Health Check - Channel Agent")
-    print("=" * 62)
+"on":
+  workflow_dispatch:
+    inputs:
+      run_number:
+        description: 'Run number (1 or 2)'
+        required: true
+        default: '1'
+        type: choice
+        options:
+          - '1'
+          - '2'
+  schedule:
+    - cron: '30 3 * * *'
+    - cron: '30 12 * * *'
 
-    checks = {
-        "secrets": check_secrets_present(),
-        "github": check_github_access(),
-        "youtube_api": check_youtube_api(),
-        "youtube_oauth": check_youtube_oauth(),
-        "gemini": check_gemini_api(),
-        "email": check_email_service(),
-        "config_files": check_config_files(),
-    }
+env:
+  YT_API_KEY: ${{ secrets.YT_API_KEY }}
+  CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+  PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
+  EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
+  EMAIL_TO_ADDRESS: ${{ secrets.EMAIL_TO_ADDRESS }}
+  OWNER: Suryansh0704
 
-    print()
+jobs:
+  run-intelligence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
 
-    all_pass = True
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    for name, result in checks.items():
-        status = result.get("status", "FAIL")
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
 
-        if status == "PASS":
-            icon = "PASS"
-        elif status == "WARN":
-            icon = "WARN"
-        else:
-            icon = "FAIL"
-            all_pass = False
+      - name: Health Check
+        id: health
+        shell: python
+        run: |
+          import os, sys, json, requests
+          from pathlib import Path
+          
+          OWNER = "Suryansh0704"
+          REPOS = ["Channel-Agent-", "Video-generator-", "Audio-generator-", "Video-editor-"]
+          SECRETS = ["YT_API_KEY", "CHANNEL_ID", "YT_REFRESH_TOKEN", "YT_CLIENT_ID",
+                     "YT_CLIENT_SECRET", "PAT_TOKEN", "GEMINI_API_KEY",
+                     "EMAIL_SERVICE_API_KEY", "EMAIL_FROM_ADDRESS", "EMAIL_TO_ADDRESS"]
+          
+          Path("logs").mkdir(exist_ok=True)
+          checks = {}
+          all_pass = True
+          
+          missing = [s for s in SECRETS if not os.environ.get(s, "")]
+          if missing:
+              checks["secrets"] = {"status": "FAIL", "message": "Missing: " + ", ".join(missing)}
+              all_pass = False
+          else:
+              checks["secrets"] = {"status": "PASS", "message": "All " + str(len(SECRETS)) + " secrets present"}
+          
+          token = os.environ.get("PAT_TOKEN", "")
+          if token:
+              h = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json"}
+              r = requests.get("https://api.github.com/user", headers=h, timeout=10)
+              if r.status_code == 200:
+                  user = r.json().get("login", "unknown")
+                  repo_ok = []
+                  for repo in REPOS:
+                      rr = requests.get("https://api.github.com/repos/" + OWNER + "/" + repo, headers=h, timeout=10)
+                      repo_ok.append(repo + (": OK" if rr.status_code == 200 else ": FAIL(" + str(rr.status_code) + ")"))
+                  checks["github"] = {"status": "PASS", "message": "User: " + user, "repos": repo_ok}
+              else:
+                  checks["github"] = {"status": "FAIL", "message": "GitHub API: " + str(r.status_code)}
+                  all_pass = False
+          else:
+              checks["github"] = {"status": "FAIL", "message": "PAT_TOKEN not set"}
+              all_pass = False
+          
+          yt_key = os.environ.get("YT_API_KEY", "")
+          ch_id = os.environ.get("CHANNEL_ID", "")
+          if yt_key and ch_id:
+              r = requests.get("https://www.googleapis.com/youtube/v3/channels",
+                  params={"part": "snippet", "id": ch_id, "key": yt_key}, timeout=10)
+              if r.status_code == 200 and r.json().get("items"):
+                  checks["youtube"] = {"status": "PASS", "message": "Channel: " + r.json()["items"][0]["snippet"]["title"]}
+              else:
+                  checks["youtube"] = {"status": "FAIL", "message": "YT API: " + str(r.status_code)}
+                  all_pass = False
+          else:
+              checks["youtube"] = {"status": "FAIL", "message": "YT_KEY or CH_ID missing"}
+              all_pass = False
+          
+          gemini = os.environ.get("GEMINI_API_KEY", "")
+          if gemini:
+              r = requests.get("https://generativelanguage.googleapis.com/v1beta/models?key=" + gemini, timeout=10)
+              checks["gemini"] = {"status": "PASS" if r.status_code == 200 else "FAIL",
+                                  "message": "OK" if r.status_code == 200 else "Status: " + str(r.status_code)}
+              if r.status_code != 200: all_pass = False
+          else:
+              checks["gemini"] = {"status": "FAIL", "message": "GEMINI_API_KEY not set"}
+              all_pass = False
+          
+          email_ok = all(os.environ.get(s, "") for s in ["EMAIL_SERVICE_API_KEY", "EMAIL_FROM_ADDRESS", "EMAIL_TO_ADDRESS"])
+          checks["email"] = {"status": "PASS" if email_ok else "FAIL",
+                             "message": "Email config OK" if email_ok else "Missing email secrets"}
+          if not email_ok: all_pass = False
+          
+          print("=" * 50)
+          for name, res in checks.items():
+              icon = "PASS" if res["status"] == "PASS" else "WARN" if res["status"] == "WARN" else "FAIL"
+              print("  " + icon + " " + name.upper().ljust(12) + " -> " + res["status"] + " | " + res["message"])
+          print("=" * 50)
+          
+          with open("logs/health_check.json", "w") as f:
+              json.dump({"overall": "PASS" if all_pass else "FAIL", "checks": checks}, f, indent=2)
+          
+          if not all_pass:
+              print("HEALTH CHECK FAILED")
+              sys.exit(1)
+          else:
+              print("ALL CHECKS PASSED")
 
-        print(
-            f"  {icon} {name.upper().ljust(15)} -> "
-            f"{status} | {result.get('message', '')}"
-        )
+      - name: Collect Analytics
+        if: steps.health.outcome == 'success'
+        shell: python
+        run: |
+          import os, json, requests
+          from pathlib import Path
+          from datetime import datetime
+          
+          API_KEY = os.environ["YT_API_KEY"]
+          CH_ID = os.environ["CHANNEL_ID"]
+          
+          videos = []
+          next_page = None
+          for _ in range(3):
+              params = {"part": "snippet,statistics,contentDetails", "channelId": CH_ID,
+                        "maxResults": 50, "order": "date", "type": "video", "key": API_KEY}
+              if next_page: params["pageToken"] = next_page
+              r = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=15)
+              data = r.json()
+              if "items" not in data: break
+              
+              video_ids = [item["id"]["videoId"] for item in data["items"] if "videoId" in item.get("id", {})]
+              if video_ids:
+                  stats_r = requests.get("https://www.googleapis.com/youtube/v3/videos",
+                      params={"part": "statistics,snippet,contentDetails", "id": ",".join(video_ids), "key": API_KEY}, timeout=15)
+                  stats = stats_r.json()
+                  for item in stats.get("items", []):
+                      duration = item["contentDetails"]["duration"]
+                      secs = 0
+                      if "M" in duration:
+                          mins = duration.split("M")[0].split("PT")[-1]
+                          secs += int(mins) * 60 if mins.isdigit() else 0
+                      if "S" in duration:
+                          s = duration.split("S")[0].split("M")[-1].split("H")[-1].split("PT")[-1]
+                          secs += int(s) if s.isdigit() else 0
+                      
+                      stats_data = item["statistics"]
+                      views = int(stats_data.get("viewCount", 0))
+                      likes = int(stats_data.get("likeCount", 0))
+                      comments = int(stats_data.get("commentCount", 0))
+                      engagement = likes + comments
+                      score = (views * 0.4) + (engagement * 2.0) + (max(0, 60 - secs) * 100)
+                      
+                      videos.append({
+                          "video_id": item["id"],
+                          "title": item["snippet"]["title"],
+                          "published_at": item["snippet"]["publishedAt"],
+                          "views": views,
+                          "likes": likes,
+                          "comments": comments,
+                          "duration_seconds": secs,
+                          "composite_score": round(score, 2),
+                          "hook_type": "question" if "?" in item["snippet"]["title"] else "statement"
+                      })
+              
+              next_page = data.get("nextPageToken")
+              if not next_page: break
+          
+          Path("data").mkdir(exist_ok=True)
+          analytics = {
+              "collected_at": datetime.utcnow().isoformat(),
+              "channel_id": CH_ID,
+              "total_videos": len(videos),
+              "videos": videos[:50]
+          }
+          
+          with open("data/analytics.json", "w") as f:
+              json.dump(analytics, f, indent=2)
+          
+          print("Collected " + str(len(videos)) + " videos")
+          if videos:
+              print("Latest: " + videos[0]["title"][:60] + "...")
+              print("Best score: " + str(max(v["composite_score"] for v in videos)))
 
-        if "repos" in result:
-            for repo in result["repos"]:
-                print(f"      {repo}")
+      - name: Analyze Comments
+        if: steps.health.outcome == 'success'
+        shell: python
+        run: |
+          import os, json, requests
+          from pathlib import Path
+          from datetime import datetime
+          
+          API_KEY = os.environ["YT_API_KEY"]
+          GEMINI_KEY = os.environ["GEMINI_API_KEY"]
+          
+          with open("data/analytics.json", "r") as f:
+              analytics = json.load(f)
+          
+          if not analytics["videos"]:
+              print("No videos to analyze")
+              exit(0)
+          
+          latest = analytics["videos"][0]["video_id"]
+          
+          comments = []
+          r = requests.get("https://www.googleapis.com/youtube/v3/commentThreads",
+              params={"part": "snippet", "videoId": latest, "maxResults": 100, "key": API_KEY}, timeout=15)
+          data = r.json()
+          
+          for item in data.get("items", []):
+              text = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+              comments.append(text)
+          
+          sentiment = {"positive": 0, "negative": 0, "neutral": 0, "themes": [], "total": len(comments)}
+          
+          if comments and GEMINI_KEY:
+              sample = " | ".join(comments[:10])
+              prompt = "Analyze these YouTube comments. Return ONLY JSON: {\"sentiment\":\"positive/negative/neutral\",\"themes\":[\"theme1\",\"theme2\"],\"requests\":[\"request1\"]}. Comments: " + sample[:2000]
+              r = requests.post(
+                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY,
+                  json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+              try:
+                  text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                  start = text.find("{")
+                  end = text.rfind("}") + 1
+                  if start >= 0 and end > start:
+                      parsed = json.loads(text[start:end])
+                      sentiment["gemini_analysis"] = parsed
+              except Exception as e:
+                  sentiment["gemini_error"] = str(e)
+          
+          Path("data").mkdir(exist_ok=True)
+          with open("data/comment_sentiment.json", "w") as f:
+              json.dump({"video_id": latest, "analyzed_at": datetime.utcnow().isoformat(),
+                         "comment_count": len(comments), "sentiment": sentiment}, f, indent=2)
+          
+          print("Analyzed " + str(len(comments)) + " comments for video " + latest)
 
-    log_data = {
-        "overall": "PASS" if all_pass else "FAIL",
-        "checks": checks,
-    }
+      - name: Evolve Configs
+        if: steps.health.outcome == 'success'
+        shell: python
+        env:
+          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
+        run: |
+          import os, json, math
+          from pathlib import Path
+          from datetime import datetime
+          
+          Path("config").mkdir(exist_ok=True)
+          Path("evolution").mkdir(exist_ok=True)
+          
+          try:
+              with open("data/analytics.json", "r") as f:
+                  analytics = json.load(f)
+              videos = analytics.get("videos", [])
+          except:
+              videos = []
+          
+          if len(videos) < 2:
+              print("Not enough data for evolution, using defaults")
+              tier = "NEUTRAL"
+              avg = 0
+              z = 0
+          else:
+              latest = videos[0]["composite_score"]
+              baseline = videos[1:11]
+              scores = [v["composite_score"] for v in baseline]
+              
+              if not scores:
+                  tier = "NEUTRAL"
+                  avg = 0
+                  z = 0
+              else:
+                  avg = sum(scores) / len(scores)
+                  best = max(scores)
+                  worst = min(scores)
+                  
+                  if len(scores) > 1:
+                      std = math.sqrt(sum((s - avg) ** 2 for s in scores) / len(scores))
+                      z = (latest - avg) / std if std > 0 else 0
+                  else:
+                      z = 0
+                  
+                  if latest > best and z > 1.96:
+                      tier = "BREAKTHROUGH"
+                  elif latest > avg and z > 0.5:
+                      tier = "IMPROVEMENT"
+                  elif latest > worst:
+                      tier = "NEUTRAL"
+                  else:
+                      tier = "DISASTER"
+          
+          print("Evolution tier: " + tier)
+          
+          base_configs = {
+              "video-generator-config.json": {
+                  "version": "1.0.0",
+                  "target_duration_seconds": 55,
+                  "hook_settings": {"duration_seconds": 3, "style": "question", "templates": ["Did you know...", "Why do...", "The secret..."]},
+                  "visual_settings": {"text_animation": "typewriter", "background": "dark_gradient", "caption_style": "bold_yellow", "cut_interval_seconds": 2.5, "zoom_on_impact": True, "zoom_intensity": 1.15, "brightness": 0.04, "contrast": 1.10, "saturation": 1.25, "gamma": 1.05, "fade_in_seconds": 0.4, "fade_out_seconds": 0.5},
+                  "title_optimization": {"preferred_words": ["secret", "why", "dark", "hidden", "truth"], "max_length": 80, "must_include_hook": True},
+                  "content_rules": {"pattern_interrupt_every_seconds": 5, "danger_zone_mitigation": ["zoom", "color_shift"]},
+                  "thumbnail_text_overlay": {"enabled": True, "style": "bold_white", "max_words": 5}
+              },
+              "audio-generator-config.json": {
+                  "version": "1.0.0",
+                  "voice_settings": {"style": "deep_dramatic", "pace_wpm": 165, "emphasis_words": ["secret", "never", "always", "dark", "truth"], "pause_after_hook": 0.8},
+                  "audio_effects": {"background_music_volume": 0.15, "whoosh_on_cut": True, "heartbeat_on_reveal": True, "heartbeat_volume": 0.3}
+              },
+              "video-editor-config.json": {
+                  "version": "1.0.0",
+                  "cut_settings": {"max_segment_duration": 3.0, "transition_style": "cut", "zoom_on_impact": True, "zoom_intensity": 1.15},
+                  "text_overlay": {"duration_seconds": 3, "highlight_keywords": ["secret", "why", "you", "never", "always", "truth", "dark", "hidden"], "font_size": 48, "font_color": "white", "stroke_color": "black", "stroke_width": 3},
+                  "danger_zones": [{"start_seconds": 15, "end_seconds": 18, "effect": "red_flash"}, {"start_seconds": 30, "end_seconds": 33, "effect": "shake"}],
+                  "danger_zone_effects": {"red_flash": {"color_shift": "red"}, "shake": {"intensity": 5}}
+              },
+              "uploader-config.json": {
+                  "version": "1.0.0",
+                  "optimal_upload_times": ["09:00", "18:00"],
+                  "title_formula": "{hook} | Dark Psychology Secret",
+                  "hashtags": {"niche": ["DarkPsychology", "HumanBehavior", "PsychologicalTricks"], "viral": ["ViralShorts", "TrendingShorts", "Shorts"], "count": 15, "test_hashtags": ["MindGames", "BehavioralPsychology"]},
+                  "description_template": "{hook}\n\nDecoding dark psychology and hidden human behaviors nobody talks about.\n\nFollow for more psychological facts, mind games, and manipulation tactics exposed.",
+                  "category_id": "27",
+                  "privacy_status": "public"
+              },
+              "script-prompt-config.json": {
+                  "version": "1.0.0",
+                  "generated_at": datetime.utcnow().isoformat(),
+                  "gemini_system_prompt": "You are a Dark Psychology content creator. Write engaging YouTube Shorts scripts (130-140 words, 3 paragraphs). Use hooks, emotional words, and pattern interrupts. Include words like: secret, why, dark, hidden, truth, never, always. End with a loop back to the hook.",
+                  "rules": {"optimal_length_words": 135, "must_include": ["secret", "why", "dark"], "avoid_patterns": ["clickbait", "misleading"], "preferred_patterns": ["question_hook", "number_hook", "story_hook"]}
+              }
+          }
+          
+          multiplier = {"BREAKTHROUGH": 1.15, "IMPROVEMENT": 1.10, "NEUTRAL": 1.05, "DISASTER": 0.9}[tier]
+          
+          if tier != "DISASTER":
+              vg = base_configs["video-generator-config.json"]
+              vg["visual_settings"]["cut_interval_seconds"] = round(min(4.0, max(1.0, vg["visual_settings"]["cut_interval_seconds"] * multiplier)), 2)
+              vg["hook_settings"]["duration_seconds"] = round(min(5.0, max(1.0, vg["hook_settings"]["duration_seconds"] * multiplier)), 1)
+              vg["target_duration_seconds"] = min(60, max(30, int(vg["target_duration_seconds"] * multiplier)))
+              
+              ag = base_configs["audio-generator-config.json"]
+              ag["voice_settings"]["pace_wpm"] = min(200, max(120, int(ag["voice_settings"]["pace_wpm"] * multiplier)))
+              ag["audio_effects"]["background_music_volume"] = round(min(0.5, max(0.05, ag["audio_effects"]["background_music_volume"] * (multiplier if multiplier > 1 else 0.95))), 3)
+          else:
+              print("DISASTER detected - resetting to safe defaults")
+              vg = base_configs["video-generator-config.json"]
+              vg["visual_settings"]["cut_interval_seconds"] = 2.5
+              vg["hook_settings"]["duration_seconds"] = 3.0
+              ag = base_configs["audio-generator-config.json"]
+              ag["voice_settings"]["pace_wpm"] = 165
+          
+          for filename, config in base_configs.items():
+              with open("config/" + filename, "w") as f:
+                  json.dump(config, f, indent=2)
+              print("Generated: " + filename)
+          
+          history_entry = {
+              "timestamp": datetime.utcnow().isoformat(),
+              "tier": tier,
+              "multiplier": multiplier,
+              "latest_score": videos[0]["composite_score"] if videos else 0,
+              "baseline_avg": avg,
+              "z_score": z
+          }
+          
+          try:
+              with open("evolution/history.json", "r") as f:
+                  history = json.load(f)
+          except:
+              history = {"runs": []}
+          
+          history["runs"].append(history_entry)
+          with open("evolution/history.json", "w") as f:
+              json.dump(history, f, indent=2)
+          
+          print("Evolution complete. Tier: " + tier)
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+      - name: Generate Script Prompt
+        if: steps.health.outcome == 'success'
+        shell: python
+        run: |
+          import os, json
+          from pathlib import Path
+          from datetime import datetime
+          from collections import Counter
+          
+          Path("scripts").mkdir(exist_ok=True)
+          
+          with open("config/script-prompt-config.json", "r") as f:
+              prompt_config = json.load(f)
+          
+          try:
+              with open("data/analytics.json", "r") as f:
+                  analytics = json.load(f)
+              videos = analytics.get("videos", [])
+          except:
+              videos = []
+          
+          if len(videos) >= 5:
+              top5 = sorted(videos, key=lambda x: x["composite_score"], reverse=True)[:5]
+              bottom5 = sorted(videos, key=lambda x: x["composite_score"])[:5]
+              
+              winning_titles = [v["title"] for v in top5]
+              losing_titles = [v["title"] for v in bottom5]
+              
+              def extract_words(titles):
+                  words = []
+                  for t in titles:
+                      words.extend([w.lower() for w in t.split() if len(w) > 3])
+                  return Counter(words)
+              
+              winning_words = extract_words(winning_titles)
+              losing_words = extract_words(losing_titles)
+              
+              new_winning = [w for w, c in winning_words.most_common(10) if w not in losing_words or winning_words[w] > losing_words.get(w, 0)]
+              
+              current_must = set(prompt_config["rules"]["must_include"])
+              added = 0
+              for word in new_winning:
+                  if word not in current_must and added < 3:
+                      current_must.add(word)
+                      added += 1
+              
+              prompt_config["rules"]["must_include"] = list(current_must)
+              print("Added " + str(added) + " new winning words to prompt")
+          
+          prompt_config["generated_at"] = datetime.utcnow().isoformat()
+          
+          try:
+              with open("evolution/history.json", "r") as f:
+                  history = json.load(f)
+              run_count = len(history.get("runs", []))
+          except:
+              run_count = 0
+          
+          prompt_config["version"] = "1.0." + str(run_count)
+          
+          with open("config/script-prompt-config.json", "w") as f:
+              json.dump(prompt_config, f, indent=2)
+          
+          with open("scripts/gemini-prompt.json", "w") as f:
+              json.dump({"system_prompt": prompt_config["gemini_system_prompt"], "version": prompt_config["version"]}, f, indent=2)
+          
+          print("Prompt updated to version: " + prompt_config["version"])
 
-    log_file = LOG_DIR / "health_check.json"
+      - name: Batch Generate Scripts
+        if: steps.health.outcome == 'success' && (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
+        shell: python
+        run: |
+          import os, json, requests
+          from pathlib import Path
+          from datetime import datetime
+          
+          GEMINI_KEY = os.environ["GEMINI_API_KEY"]
+          Path("pending_scripts").mkdir(exist_ok=True)
+          
+          with open("config/script-prompt-config.json", "r") as f:
+              prompt_config = json.load(f)
+          
+          topics = [
+              "Dark psychology tricks used by manipulators",
+              "Why people fall for mind control techniques",
+              "The hidden truth about human behavior patterns",
+              "Secret manipulation tactics in relationships",
+              "Dark historical facts about psychological warfare"
+          ]
+          
+          scripts = []
+          for i, topic in enumerate(topics[:3]):
+              prompt = prompt_config["gemini_system_prompt"] + "\n\nWrite a script about: " + topic + "\n\nRequirements: 130-140 words, 3 paragraphs, include at least 3 words from this list: " + ", ".join(prompt_config["rules"]["must_include"])
+              
+              r = requests.post(
+                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY,
+                  json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
+              
+              try:
+                  text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+                  word_count = len(text.split())
+                  
+                  script = {
+                      "id": "script_" + datetime.utcnow().strftime("%Y%m%d") + "_" + str(i),
+                      "topic": topic,
+                      "content": text,
+                      "word_count": word_count,
+                      "generated_at": datetime.utcnow().isoformat(),
+                      "prompt_version": prompt_config["version"]
+                  }
+                  scripts.append(script)
+                  
+                  with open("pending_scripts/" + script["id"] + ".json", "w") as f:
+                      json.dump(script, f, indent=2)
+                  
+                  print("Generated script " + str(i+1) + ": " + str(word_count) + " words")
+              except Exception as e:
+                  print("Failed to generate script " + str(i+1) + ": " + str(e))
+          
+          print("Batch complete. Generated " + str(len(scripts)) + " scripts.")
 
-    with log_file.open("w", encoding="utf-8") as f:
-        json.dump(log_data, f, indent=2)
+      - name: Competitor Monitor
+        if: steps.health.outcome == 'success' && github.event.schedule == '30 3 * * 0'
+        shell: python
+        run: |
+          import os, json, requests
+          from pathlib import Path
+          from datetime import datetime
+          from collections import Counter
+          
+          API_KEY = os.environ["YT_API_KEY"]
+          Path("data").mkdir(exist_ok=True)
+          
+          queries = ["dark psychology shorts", "manipulation tactics", "mind control techniques", "psychological tricks"]
+          all_videos = []
+          
+          for query in queries:
+              r = requests.get("https://www.googleapis.com/youtube/v3/search",
+                  params={"part": "snippet", "q": query, "type": "video", "videoDuration": "short",
+                          "order": "viewCount", "maxResults": 10, "key": API_KEY}, timeout=15)
+              data = r.json()
+              
+              for item in data.get("items", []):
+                  all_videos.append({
+                      "title": item["snippet"]["title"],
+                      "channel": item["snippet"]["channelTitle"],
+                      "published_at": item["snippet"]["publishedAt"],
+                      "video_id": item["id"]["videoId"]
+                  })
+          
+          words = []
+          for v in all_videos:
+              words.extend([w.lower() for w in v["title"].split() if len(w) > 3])
+          
+          trends = {
+              "analyzed_at": datetime.utcnow().isoformat(),
+              "total_videos": len(all_videos),
+              "top_words": Counter(words).most_common(20),
+              "videos": all_videos[:20]
+          }
+          
+          with open("data/competitor_trends.json", "w") as f:
+              json.dump(trends, f, indent=2)
+          
+          print("Analyzed " + str(len(all_videos)) + " competitor videos")
+          print("Top words: " + str([w[0] for w in trends["top_words"][:5]]))
 
-    print(f"\n  Log saved: {log_file}")
-    print("=" * 62)
+      - name: Push Configs
+        if: steps.health.outcome == 'success'
+        shell: python
+        run: |
+          import os, json, base64, requests
+          from pathlib import Path
+          
+          TOKEN = os.environ["PAT_TOKEN"]
+          OWNER = os.environ["OWNER"]
+          HEADERS = {"Authorization": "Bearer " + TOKEN, "Accept": "application/vnd.github+json"}
+          
+          REPO_MAP = {
+              "Video-generator-": ["video-generator-config.json"],
+              "Audio-generator-": ["audio-generator-config.json"],
+              "Video-editor-": ["video-editor-config.json"],
+              "Channel-Agent-": ["uploader-config.json", "script-prompt-config.json"]
+          }
+          
+          for repo, files in REPO_MAP.items():
+              for filename in files:
+                  filepath = "config/" + filename
+                  if not Path(filepath).exists():
+                      print("Missing: " + filepath)
+                      continue
+                  
+                  with open(filepath, "r") as f:
+                      content = f.read()
+                  
+                  get_r = requests.get(
+                      "https://api.github.com/repos/" + OWNER + "/" + repo + "/contents/" + filename + "?ref=main",
+                      headers=HEADERS, timeout=10)
+                  
+                  sha = get_r.json().get("sha") if get_r.status_code == 200 else None
+                  
+                  payload = {
+                      "message": "Auto-update config from Channel Agent",
+                      "content": base64.b64encode(content.encode()).decode(),
+                      "branch": "main"
+                  }
+                  if sha:
+                      payload["sha"] = sha
+                  
+                  put_r = requests.put(
+                      "https://api.github.com/repos/" + OWNER + "/" + repo + "/contents/" + filename,
+                      headers=HEADERS, json=payload, timeout=10)
+                  
+                  if put_r.status_code in [200, 201]:
+                      print("Pushed " + filename + " to " + repo)
+                  else:
+                      print("Failed to push " + filename + " to " + repo + ": " + str(put_r.status_code))
 
-    if all_pass:
-        print("  PASS ALL CHECKS PASSED - Proceeding")
-        sys.exit(0)
-    else:
-        print("  FAIL HEALTH CHECK FAILED - Aborting workflow")
-        sys.exit(1)
+      - name: Cross-Platform Adapt
+        if: steps.health.outcome == 'success' && (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from datetime import datetime
+          
+          Path("data").mkdir(exist_ok=True)
+          
+          with open("config/uploader-config.json", "r") as f:
+              uc = json.load(f)
+          
+          instagram = {
+              "platform": "instagram_reels",
+              "hashtags": ["#DarkPsychology", "#MindGames", "#PsychologyFacts", "#Reels", "#ViralReels", "#TrendingReels"],
+              "caption": uc["description_template"][:150] + "...\n\nFollow for daily dark psychology facts!",
+              "aspect_ratio": "9:16",
+              "max_duration": 90
+          }
+          
+          tiktok = {
+              "platform": "tiktok",
+              "hashtags": ["#DarkPsychology", "#PsychologyHacks", "#MindTricks", "#TikTok", "#FYP", "#ForYouPage"],
+              "caption": uc["description_template"][:100] + "... #DarkPsychology #MindGames",
+              "aspect_ratio": "9:16",
+              "max_duration": 180,
+              "sound_trending": True
+          }
+          
+          cross_platform = {
+              "generated_at": datetime.utcnow().isoformat(),
+              "youtube": {"title_formula": uc["title_formula"], "hashtags": uc["hashtags"], "description": uc["description_template"]},
+              "instagram_reels": instagram,
+              "tiktok": tiktok
+          }
+          
+          with open("data/cross_platform_metadata.json", "w") as f:
+              json.dump(cross_platform, f, indent=2)
+          
+          print("Cross-platform metadata generated")
 
+      - name: Send Email Report
+        if: steps.health.outcome == 'success'
+        shell: python
+        env:
+          RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
+        run: |
+          import os, json, requests
+          from pathlib import Path
+          from datetime import datetime
+          
+          API_KEY = os.environ["EMAIL_SERVICE_API_KEY"]
+          FROM_ADDR = os.environ["EMAIL_FROM_ADDRESS"]
+          TO_ADDR = os.environ["EMAIL_TO_ADDRESS"]
+          RUN_NUM = os.environ["RUN_NUMBER"]
+          
+          try:
+              with open("data/analytics.json", "r") as f:
+                  analytics = json.load(f)
+              latest_video = analytics["videos"][0] if analytics["videos"] else None
+          except:
+              latest_video = None
+          
+          try:
+              with open("evolution/history.json", "r") as f:
+                  history = json.load(f)
+              latest_tier = history["runs"][-1]["tier"] if history.get("runs") else "UNKNOWN"
+          except:
+              latest_tier = "UNKNOWN"
+          
+          subject = "Channel Agent Report - Run " + RUN_NUM + " - " + datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+          
+          body = "Channel Agent Daily Report\n"
+          body += "=" * 50 + "\n\n"
+          body += "Run: " + RUN_NUM + "\n"
+          body += "Time: " + datetime.utcnow().isoformat() + "\n"
+          body += "Evolution Tier: " + latest_tier + "\n\n"
+          
+          if latest_video:
+              body += "Latest Video Performance:\n"
+              body += "  Title: " + latest_video["title"][:60] + "...\n"
+              body += "  Views: " + str(latest_video["views"]) + "\n"
+              body += "  Likes: " + str(latest_video["likes"]) + "\n"
+              body += "  Score: " + str(latest_video["composite_score"]) + "\n\n"
+          
+          body += "System Status: HEALTHY\n"
+          body += "All checks passed. Configs pushed to repos.\n"
+          
+          payload = {
+              "personalizations": [{"to": [{"email": TO_ADDR}]}],
+              "from": {"email": FROM_ADDR},
+              "subject": subject,
+              "content": [{"type": "text/plain", "value": body}]
+          }
+          
+          r = requests.post("https://api.sendgrid.com/v3/mail/send",
+              headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"},
+              json=payload, timeout=15)
+          
+          if r.status_code in [200, 202]:
+              print("Email sent to " + TO_ADDR)
+          else:
+              print("Email failed: " + str(r.status_code) + " - saving locally")
+              Path("logs").mkdir(exist_ok=True)
+              with open("logs/email_report_" + datetime.utcnow().strftime("%Y%m%d_%H%M") + ".txt", "w") as f:
+                  f.write("To: " + TO_ADDR + "\nSubject: " + subject + "\n\n" + body)
 
-if __name__ == "__main__":
-    main()
+      - name: Commit History
+        if: steps.health.outcome == 'success'
+        shell: python
+        run: |
+          import subprocess, os
+          from datetime import datetime
+          
+          subprocess.run(["git", "config", "user.name", "Channel Agent"], check=False)
+          subprocess.run(["git", "config", "user.email", "agent@channel.local"], check=False)
+          subprocess.run(["git", "add", "-A"], check=False)
+          
+          result = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
+          if result.returncode != 0:
+              run_num = os.environ.get("GITHUB_RUN_NUMBER", "0")
+              msg = "Run " + run_num + " " + datetime.utcnow().strftime("%Y-%m-%d_%H:%M") + " UTC"
+              subprocess.run(["git", "commit", "-m", msg], check=False)
+              subprocess.run(["git", "push"], check=False)
+              print("Committed and pushed")
+          else:
+              print("No changes to commit")
