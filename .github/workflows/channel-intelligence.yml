@@ -2,21 +2,41 @@ name: Channel Intelligence
 
 on:
   schedule:
-    - cron: '0 4 * * *'    # 9:30 AM IST (UTC+5:30)
-    - cron: '0 13 * * *'   # 6:30 PM IST (UTC+5:30)
+    - cron: '30 3 * * *'    # 9:00 AM IST (UTC+5:30)
+    - cron: '30 12 * * *'   # 6:00 PM IST (UTC+5:30)
   workflow_dispatch:
     inputs:
       run_number:
         description: 'Run number (1 or 2)'
         required: true
         default: '1'
+        type: choice
+        options:
+          - '1'
+          - '2'
+
+env:
+  YT_API_KEY: ${{ secrets.YT_API_KEY }}
+  CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+  YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+  YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+  YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+  PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+  EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
+  EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
+  EMAIL_TO_ADDRESS: ${{ secrets.EMAIL_TO_ADDRESS }}
 
 jobs:
   run-intelligence:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout Channel-Agent-
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -25,69 +45,100 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 1: HEALTH CHECK (Gates everything)
+      # ═══════════════════════════════════════════════════════
       - name: Health Check
+        id: health
         run: python scripts/health_check.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 2: COLLECT ANALYTICS
+      # ═══════════════════════════════════════════════════════
       - name: Collect Analytics
-        env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
-          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+        if: steps.health.outcome == 'success'
         run: python scripts/analytics_collector.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 3: ANALYZE COMMENTS
+      # ═══════════════════════════════════════════════════════
       - name: Analyze Comments
-        env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        if: steps.health.outcome == 'success'
         run: python scripts/comment_analyzer.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 4: EVOLVE CONFIGS
+      # ═══════════════════════════════════════════════════════
       - name: Evolve Configs
+        if: steps.health.outcome == 'success'
         env:
           RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
         run: python scripts/evolve_configs.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 5: GENERATE SCRIPT PROMPT
+      # ═══════════════════════════════════════════════════════
       - name: Generate Script Prompt
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        if: steps.health.outcome == 'success'
         run: python scripts/generate_script_prompt.py
 
-      - name: Batch Generate Scripts (Run 1 only)
-        if: github.event.schedule == '0 4 * * *' || github.event.inputs.run_number == '1'
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # ═══════════════════════════════════════════════════════
+      #  STEP 6: BATCH GENERATE SCRIPTS (Run 1 only)
+      # ═══════════════════════════════════════════════════════
+      - name: Batch Generate Scripts
+        if: |
+          steps.health.outcome == 'success' && 
+          (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
         run: python scripts/batch_generator.py
 
-      - name: Competitor Monitor (Sunday Run 1 only)
-        if: (github.event.schedule == '0 4 * * *' && github.event.schedule == '0 4 * * 0') || github.event.inputs.run_number == '1'
-        env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
-        run: python scripts/competitor_monitor.py
-
+      # ═══════════════════════════════════════════════════════
+      #  STEP 7: PUSH CONFIGS TO ALL REPOS
+      # ═══════════════════════════════════════════════════════
       - name: Push Configs to Repos
-        env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        if: steps.health.outcome == 'success'
         run: python scripts/push_configs.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 8: CROSS-PLATFORM ADAPT (Run 1 only)
+      # ═══════════════════════════════════════════════════════
       - name: Cross-Platform Adapt
-        if: github.event.schedule == '0 4 * * *' || github.event.inputs.run_number == '1'
+        if: |
+          steps.health.outcome == 'success' && 
+          (github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1')
         run: python scripts/cross_platform_adapter.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 9: SEND EMAIL REPORT
+      # ═══════════════════════════════════════════════════════
       - name: Send Email Report
+        if: steps.health.outcome == 'success'
         env:
-          EMAIL_SERVICE_API_KEY: ${{ secrets.EMAIL_SERVICE_API_KEY }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM_ADDRESS }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO_ADDRESS }}
           RUN_NUMBER: ${{ github.event.inputs.run_number || '1' }}
         run: python scripts/send_email_report.py
 
+      # ═══════════════════════════════════════════════════════
+      #  STEP 10: COMMIT EVOLUTION HISTORY
+      # ═══════════════════════════════════════════════════════
       - name: Commit Evolution History
+        if: steps.health.outcome == 'success'
         run: |
           git config user.name "Channel Agent"
           git config user.email "agent@channel.local"
           git add -A
-          git diff --cached --quiet || git commit -m "Daily evolution run ${{ github.run_number }}"
-          git push
+          if ! git diff --cached --quiet; then
+            git commit -m "Daily evolution run ${{ github.run_number }} — $(date -u +%Y-%m-%d_%H:%M)"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+
+      # ═══════════════════════════════════════════════════════
+      #  FAILURE HANDLER
+      # ═══════════════════════════════════════════════════════
+      - name: On Failure — Send Alert
+        if: failure()
+        run: |
+          echo "❌ Workflow failed. Check logs for details."
