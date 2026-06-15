@@ -2,8 +2,8 @@ name: Channel Intelligence
 
 on:
   schedule:
-    - cron: '30 3 * * *'   # 9:00 AM IST (UTC+5:30)
-    - cron: '30 12 * * *'  # 6:00 PM IST (UTC+5:30)
+    - cron: '0 4 * * *'    # 9:30 AM IST (UTC+5:30)
+    - cron: '0 13 * * *'   # 6:30 PM IST (UTC+5:30)
   workflow_dispatch:
     inputs:
       run_number:
@@ -56,10 +56,16 @@ jobs:
         run: python scripts/generate_script_prompt.py
 
       - name: Batch Generate Scripts (Run 1 only)
-        if: github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1'
+        if: github.event.schedule == '0 4 * * *' || github.event.inputs.run_number == '1'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python scripts/batch_generator.py
+
+      - name: Competitor Monitor (Sunday Run 1 only)
+        if: (github.event.schedule == '0 4 * * *' && github.event.schedule == '0 4 * * 0') || github.event.inputs.run_number == '1'
+        env:
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+        run: python scripts/competitor_monitor.py
 
       - name: Push Configs to Repos
         env:
@@ -67,7 +73,7 @@ jobs:
         run: python scripts/push_configs.py
 
       - name: Cross-Platform Adapt
-        if: github.event.schedule == '30 3 * * *' || github.event.inputs.run_number == '1'
+        if: github.event.schedule == '0 4 * * *' || github.event.inputs.run_number == '1'
         run: python scripts/cross_platform_adapter.py
 
       - name: Send Email Report
