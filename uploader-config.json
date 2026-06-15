@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "optimal_upload_times": [
+    "09:00",
+    "18:00"
+  ],
+  "title_formula": "{hook} | Dark Psychology Secret",
+  "hashtags": {
+    "niche": [
+      "DarkPsychology",
+      "HumanBehavior",
+      "PsychologicalTricks"
+    ],
+    "viral": [
+      "ViralShorts",
+      "TrendingShorts",
+      "Shorts"
+    ],
+    "count": 15,
+    "test_hashtags": [
+      "MindGames",
+      "BehavioralPsychology"
+    ]
+  },
+  "description_template": "{hook}\n\nDecoding dark psychology and hidden human behaviors nobody talks about.\n\nFollow for more psychological facts, mind games, and manipulation tactics exposed.",
+  "category_id": "27",
+  "privacy_status": "public"
+}
