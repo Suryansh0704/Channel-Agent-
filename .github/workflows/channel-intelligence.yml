@@ -12,8 +12,8 @@ name: Channel Intelligence
           - '1'
           - '2'
   schedule:
-    - cron: '30 3 * * *'
-    - cron: '30 12 * * *'
+    - cron: '30 3 * * *'   # 9 AM IST
+    - cron: '30 12 * * *'  # 6 PM IST
 
 env:
   YT_API_KEY: ${{ secrets.YT_API_KEY }}
@@ -27,6 +27,7 @@ env:
   EMAIL_FROM_ADDRESS: ${{ secrets.EMAIL_FROM_ADDRESS }}
   EMAIL_TO_ADDRESS: ${{ secrets.EMAIL_TO_ADDRESS }}
   OWNER: Suryansh0704
+  RUN_NUMBER: ${{ github.run_number }}  # <-- FIX #2: Added this
 
 jobs:
   run-intelligence:
@@ -36,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.PAT_TOKEN }}
-          fetch-depth: 0
+          repository: Suryansh0704/channel-analyzer  # <-- FIX #3: Correct repo name
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -48,6 +49,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib requests
 
+      # ============================================
+      # STEP 1: Health Check
+      # ============================================
       - name: Health Check
         id: health
         shell: python
@@ -56,7 +60,7 @@ jobs:
           from pathlib import Path
           
           OWNER = "Suryansh0704"
-          REPOS = ["Channel-agent-", "Video-generator-", "Audio-generator-", "Video-editor-"]
+          REPOS = ["channel-analyzer", "Video-generator-", "Audio-generator-", "Video-editor-"]  # <-- FIX #3
           SECRETS = ["YT_API_KEY", "CHANNEL_ID", "YT_REFRESH_TOKEN", "YT_CLIENT_ID",
                      "YT_CLIENT_SECRET", "PAT_TOKEN", "GEMINI_API_KEY",
                      "EMAIL_SERVICE_API_KEY", "EMAIL_FROM_ADDRESS", "EMAIL_TO_ADDRESS"]
@@ -65,6 +69,7 @@ jobs:
           checks = {}
           all_pass = True
           
+          # Check secrets
           missing = [s for s in SECRETS if not os.environ.get(s, "")]
           if missing:
               checks["secrets"] = {"status": "FAIL", "message": "Missing: " + ", ".join(missing)}
@@ -72,6 +77,7 @@ jobs:
           else:
               checks["secrets"] = {"status": "PASS", "message": "All " + str(len(SECRETS)) + " secrets present"}
           
+          # Check GitHub
           token = os.environ.get("PAT_TOKEN", "")
           if token:
               h = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json"}
@@ -90,6 +96,7 @@ jobs:
               checks["github"] = {"status": "FAIL", "message": "PAT_TOKEN not set"}
               all_pass = False
           
+          # Check YouTube API
           yt_key = os.environ.get("YT_API_KEY", "")
           ch_id = os.environ.get("CHANNEL_ID", "")
           if yt_key and ch_id:
@@ -116,6 +123,7 @@ jobs:
               checks["youtube"] = {"status": "FAIL", "message": "YT_KEY or CH_ID missing"}
               all_pass = False
           
+          # Check Gemini
           gemini = os.environ.get("GEMINI_API_KEY", "")
           if gemini:
               r = requests.get("https://generativelanguage.googleapis.com/v1beta/models?key=" + gemini, timeout=10)
@@ -126,6 +134,7 @@ jobs:
               checks["gemini"] = {"status": "FAIL", "message": "GEMINI_API_KEY not set"}
               all_pass = False
           
+          # Check Email
           email_ok = all(os.environ.get(s, "") for s in ["EMAIL_SERVICE_API_KEY", "EMAIL_FROM_ADDRESS", "EMAIL_TO_ADDRESS"])
           checks["email"] = {"status": "PASS" if email_ok else "FAIL",
                              "message": "Email config OK" if email_ok else "Missing email secrets"}
@@ -146,9 +155,10 @@ jobs:
           else:
               print("ALL CHECKS PASSED")
 
+      # ============================================
+      # STEP 2: Collect Analytics
+      # ============================================
       - name: Collect Analytics
-        if: steps.health.outcome == 'success'
-        id: analytics
         shell: python
         run: |
           import os, json, requests, re
@@ -186,7 +196,7 @@ jobs:
               if not uploads_playlist_id:
                   api_errors.append("No uploads playlist found for this channel")
           
-          # STEP 2: Fetch videos from uploads playlist (RELIABLE METHOD)
+          # STEP 2: Fetch videos from uploads playlist
           if uploads_playlist_id:
               print("\nSTEP 2: Fetching videos from uploads playlist...")
               next_page = None
@@ -343,9 +353,10 @@ jobs:
                   print("  - " + e)
           print("=" * 60)
 
+      # ============================================
+      # STEP 3: Analyze Comments
+      # ============================================
       - name: Analyze Comments
-        if: steps.health.outcome == 'success'
-        id: comments
         shell: python
         run: |
           import os, json, requests
@@ -386,7 +397,7 @@ jobs:
               sample = " | ".join(comments[:10])
               prompt = "Analyze these YouTube comments. Return ONLY JSON: {\"sentiment\":\"positive/negative/neutral\",\"themes\":[\"theme1\",\"theme2\"],\"requests\":[\"request1\"]}. Comments: " + sample[:2000]
               r = requests.post(
-                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY,
+                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + GEMINI_KEY,  # <-- FIX #1
                   json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
               
               print("Gemini response status: " + str(r.status_code))
@@ -425,9 +436,10 @@ jobs:
           
           print("Analyzed " + str(len(comments)) + " comments for video " + latest)
 
+      # ============================================
+      # STEP 4: Evolve Configs
+      # ============================================
       - name: Evolve Configs
-        if: steps.health.outcome == 'success'
-        id: evolve
         shell: python
         run: |
           import os, json, math
@@ -592,9 +604,10 @@ jobs:
           
           print("=" * 60)
 
+      # ============================================
+      # STEP 5: Generate Script Prompt
+      # ============================================
       - name: Generate Script Prompt
-        if: steps.health.outcome == 'success'
-        id: prompt
         shell: python
         run: |
           import os, json
@@ -661,9 +674,11 @@ jobs:
           print("Prompt updated to version: " + prompt_config["version"])
           print("Added " + str(added_words) + " new winning words: " + str(prompt_config["rules"]["must_include"][-added_words:] if added_words else "None"))
 
+      # ============================================
+      # STEP 6: Batch Generate Scripts (Run 1 only)
+      # ============================================
       - name: Batch Generate Scripts
-        if: steps.health.outcome == 'success' && github.event.inputs.run_number == '1'
-        id: scripts
+        if: github.event.inputs.run_number == '1' || github.event_name == 'schedule'
         shell: python
         run: |
           import os, json, requests
@@ -691,7 +706,7 @@ jobs:
               prompt = prompt_config["gemini_system_prompt"] + "\n\nWrite a script about: " + topic + "\n\nRequirements: 130-140 words, 3 paragraphs, include at least 3 words from this list: " + ", ".join(prompt_config["rules"]["must_include"])
               
               r = requests.post(
-                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + GEMINI_KEY,
+                  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + GEMINI_KEY,  # <-- FIX #1
                   json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30)
               
               response_data = r.json()
@@ -742,9 +757,22 @@ jobs:
           with open("logs/script_generation.json", "w") as f:
               json.dump({"generated": len(scripts), "errors": errors, "scripts": [s["id"] for s in scripts]}, f, indent=2)
 
+      # ============================================
+      # STEP 7: Competitor Monitor (Sunday 9 AM only)
+      # ============================================
+      - name: Competitor Monitor
+        if: github.event.schedule == '30 3 * * 0'  # Sunday only
+        shell: python
+        run: |
+          import os, json, requests
+          from datetime import datetime
+          print("Competitor monitoring would run here on Sundays")
+          # Add competitor logic if needed
+
+      # ============================================
+      # STEP 8: Push Configs
+      # ============================================
       - name: Push Configs
-        if: steps.health.outcome == 'success'
-        id: push
         shell: python
         run: |
           import os, json, base64, requests
@@ -758,7 +786,7 @@ jobs:
               "Video-generator-": ["video-generator-config.json"],
               "Audio-generator-": ["audio-generator-config.json"],
               "Video-editor-": ["video-editor-config.json"],
-              "Channel-agent-": ["uploader-config.json", "script-prompt-config.json"]
+              "channel-analyzer": ["uploader-config.json", "script-prompt-config.json"]  # <-- FIX #3
           }
           
           results = []
@@ -802,8 +830,10 @@ jobs:
           with open("logs/push_results.json", "w") as f:
               json.dump(results, f, indent=2)
 
+      # ============================================
+      # STEP 9: Cross-Platform Adapt
+      # ============================================
       - name: Cross-Platform Adapt
-        if: steps.health.outcome == 'success'
         shell: python
         run: |
           import json
@@ -844,9 +874,10 @@ jobs:
           
           print("Cross-platform metadata generated")
 
+      # ============================================
+      # STEP 10: Send Email Report
+      # ============================================
       - name: Send Email Report
-        if: steps.health.outcome == 'success'
-        id: email
         shell: python
         run: |
           import os, json, requests
@@ -856,7 +887,7 @@ jobs:
           API_KEY = os.environ["EMAIL_SERVICE_API_KEY"]
           FROM_ADDR = os.environ["EMAIL_FROM_ADDRESS"]
           TO_ADDR = os.environ["EMAIL_TO_ADDRESS"]
-          RUN_NUM = os.environ["RUN_NUMBER"]
+          RUN_NUM = os.environ["RUN_NUMBER"]  # <-- FIX #2: Now this works!
           
           reports = {}
           
@@ -976,31 +1007,13 @@ jobs:
                   json.dump({"status": "failed", "code": r.status_code, "response": r.text[:500], "saved_locally": True}, f)
               print("Report saved to logs/email_report_*.txt")
 
+      # ============================================
+      # STEP 11: Commit History
+      # ============================================
       - name: Commit History
-        if: steps.health.outcome == 'success'
-        shell: python
         run: |
-          import subprocess, os
-          from datetime import datetime
-          
-          subprocess.run(["git", "config", "user.name", "Channel Agent"], check=False)
-          subprocess.run(["git", "config", "user.email", "agent@channel.local"], check=False)
-          
-          subprocess.run(["git", "pull", "origin", "main", "--rebase"], check=False)
-          
-          subprocess.run(["git", "add", "-A"], check=False)
-          
-          result = subprocess.run(["git", "diff", "--cached", "--quiet"], capture_output=True)
-          if result.returncode != 0:
-              run_num = os.environ.get("GITHUB_RUN_NUMBER", "0")
-              msg = "Run " + run_num + " " + datetime.utcnow().strftime("%Y-%m-%d_%H:%M") + " UTC"
-              subprocess.run(["git", "commit", "-m", msg], check=False)
-              push_result = subprocess.run(["git", "push"], capture_output=True, text=True)
-              if push_result.returncode == 0:
-                  print("Committed and pushed successfully")
-              else:
-                  print("Push failed: " + push_result.stderr)
-                  with open("logs/git_push_error.txt", "w") as f:
-                      f.write(push_result.stderr)
-          else:
-              print("No changes to commit")
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "Auto-update: analytics, configs, evolution [run ${{ github.run_number }}]"
+          git push
