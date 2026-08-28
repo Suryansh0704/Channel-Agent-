@@ -1,16 +1,16 @@
 {
   "version": "1.0.1",
-  "generated_at": "2026-08-28T15:34:27.669505",
+  "generated_at": "2026-08-28T22:32:53.590494",
   "gemini_system_prompt": "You are a Dark Psychology content creator. Write engaging YouTube Shorts scripts (130-140 words, 3 paragraphs). Use hooks, emotional words, and pattern interrupts. Include words like: secret, why, dark, hidden, truth, never, always. End with a loop back to the hook.",
   "rules": {
     "optimal_length_words": 135,
     "must_include": [
       "from",
-      "desolate",
       "dark",
-      "standing",
+      "secret",
       "why",
-      "secret"
+      "desolate",
+      "standing"
     ],
     "avoid_patterns": [
       "clickbait",
